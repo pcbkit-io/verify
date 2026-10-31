@@ -1,0 +1,81 @@
+# PCBKit verify: the pre-production gate of a circuit board (ADR 0108). Published as
+# github.com/pcbkit-io/verify from the PCBKit repository's apps/ci-action (scripts/publish-verify.sh).
+#
+#   - uses: actions/checkout@v4
+#   - uses: pcbkit-io/verify@v0
+#     with: { project: hardware/board, require: layout }
+name: PCBKit verify
+description: Check a KiCad board before you order it, with a reproducible report of each level, its coverage and its waivers
+author: PCBKit
+branding:
+  icon: check-square
+  color: gray-dark
+inputs:
+  project:
+    description: The board's directory (a KiCad project, with or without a .pcbkit/ folder).
+    default: .
+  require:
+    description: The level the board must be verified to (language, wiring, ratings, intent, layout, ready).
+    default: ready
+  strict:
+    description: Also fail on unconfirmed findings (checks still on probation) and on a required level that passes judging nothing.
+    default: "false"
+  version:
+    description: The pcbkit release to install. Each version of this action is tested against the release it names here.
+    default: "2026.10.31"
+  binary:
+    description: A pcbkit already on the runner (a self-hosted runner, a pinned build) instead of installing the release.
+    default: ""
+  attest:
+    description: Optional. Sign the report with a GitHub artifact attestation (needs the job's id-token and attestations write permissions; check that your plan offers attestations on private repositories).
+    default: "false"
+outputs:
+  report:
+    description: Path of the report.
+    value: ${{ steps.gate.outputs.report }}
+  pass:
+    description: Whether the gate passed.
+    value: ${{ steps.gate.outputs.pass }}
+runs:
+  using: composite
+  steps:
+    - name: Install pcbkit
+      if: inputs.binary == ''
+      shell: bash
+      env:
+        PCBKIT_VERSION: ${{ inputs.version }}
+      run: |
+        curl -fsSL https://pcbkit.io/install.sh | sh
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+    - name: Check the board
+      id: gate
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        REQUIRE: ${{ inputs.require }}
+        STRICT: ${{ inputs.strict }}
+        BINARY: ${{ inputs.binary || 'pcbkit' }}
+        ACTION: ${{ github.action_path }}
+      run: |
+        set +e
+        strict=""; [ "$STRICT" = "true" ] && strict="--strict"
+        python3 -I "$ACTION/report.py" run --project "$PROJECT" --require "$REQUIRE" $strict --binary "$BINARY" --out pcbkit-report.json
+        code=$?
+        echo "report=pcbkit-report.json" >> "$GITHUB_OUTPUT"
+        echo "pass=$([ $code -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        echo "$code" > "$RUNNER_TEMP/pcbkit-gate-exit"
+        exit 0
+    - name: Upload the report
+      if: always() && hashFiles('pcbkit-report.json') != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: pcbkit-report
+        path: pcbkit-report.json
+    - name: Sign the report
+      if: always() && inputs.attest == 'true' && hashFiles('pcbkit-report.json') != ''
+      uses: actions/attest-build-provenance@v2
+      with:
+        subject-path: pcbkit-report.json
+    - name: Gate
+      shell: bash
+      run: exit "$(cat "$RUNNER_TEMP/pcbkit-gate-exit" 2>/dev/null || echo 2)"
