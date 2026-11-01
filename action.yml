@@ -68,16 +68,18 @@ runs:
         PCBKIT_VERSION: ${{ inputs.version }}
         PCBKIT_PREFIX: ${{ runner.tool_cache }}/pcbkit/${{ inputs.version }}
       run: curl -fsSL https://pcbkit.io/install.sh | sh
-    - name: The pull request's base
-      if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    - name: The base
+      if: github.event.pull_request.base.sha != '' || (github.event_name == 'push' && github.event.before != '' && github.event.before != '0000000000000000000000000000000000000000')
       shell: bash
       env:
-        BASE: ${{ github.event.pull_request.base.sha }}
+        BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
       run: |
-        # The base's files, to tell what the change did to each board (only changed boards are checked there).
+        # The base's files (a pull request's base, a push's previous commit), to tell what the change
+        # did to each board: only changed boards are checked there, and only their pictures drawn.
         dir="$RUNNER_TEMP/pcbkit-base"; rm -rf "$dir"; mkdir -p "$dir"
         if git fetch -q --no-tags --depth=1 origin "$BASE" && git archive "$BASE" | tar -x -C "$dir"; then
           echo "PCBKIT_BASE_DIR=$dir" >> "$GITHUB_ENV"
+          echo "PCBKIT_BASE_SHA=$BASE" >> "$GITHUB_ENV"
         else
           echo "::warning title=PCBKit verify::could not read the base commit $BASE: no per-board change in this run"
         fi
@@ -95,7 +97,6 @@ runs:
         ACTION: ${{ github.action_path }}
         PCBKIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         PCBKIT_PUBLIC: ${{ github.event.repository.private == false && 'true' || 'false' }}
-        PCBKIT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: |
         set +e
         args=(--require "$REQUIRE" --policy "$POLICY" --binary "$BINARY" --out pcbkit-reports)
@@ -120,7 +121,7 @@ runs:
         sarif_file: pcbkit-reports/pcbkit.sarif
         category: pcbkit
     - name: Comment on the pull request
-      if: always() && inputs.comment == 'true' && hashFiles('pcbkit-reports/comment.md') != ''
+      if: always() && inputs.comment == 'true' && github.event.pull_request.number != '' && hashFiles('pcbkit-reports/comment.md') != ''
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.token }}

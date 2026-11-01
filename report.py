@@ -754,7 +754,7 @@ def run(a):
     if ctx["public"] and a.pictures:
         warm([picture_url(ctx, r["project"]) for r in reps if r["project"] in changed and not r.get("error")])
     md = summary(reps, ctx, pictures=a.pictures)
-    md += f"\n<sub>{len(reps)} boards checked in {checked:.1f} s{f'; {len(changed)} changed by this pull request' if a.base else ''}.</sub>\n"
+    md += f"\n<sub>{len(reps)} boards checked in {checked:.1f} s{f'; {len(changed)} changed since the base' if a.base else ''}.</sub>\n"
     with open(os.path.join(a.out, "summary.md"), "w") as f:
         f.write(md)
     target = os.environ.get("GITHUB_STEP_SUMMARY")

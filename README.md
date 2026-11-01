@@ -62,7 +62,9 @@ your files are never changed.
   that opens the board in PCBKit's viewer with those items selected) and how to reproduce it.
 - **A pull request's comment**: per board the change touched, its level before and after and its
   new and fixed findings (unrouted nets too). Only boards whose files changed are checked at the
-  base. One comment per pull request, updated on every push; none while no board changed.
+  base. One comment per pull request, updated on every push; none while no board changed. A push
+  is compared with the commit before it the same way: unchanged boards keep the pictures already
+  drawn, and annotations name only what the push brought.
 - **Annotations and code scanning**: findings at the design's line (`.pcbkit/design.pcbkit`), or on
   the board file with the position in millimetres.
 
