@@ -1,25 +1,37 @@
-# PCBKit verify: the pre-production gate of a circuit board (ADR 0108). Published as
+# PCBKit verify: the pre-production gate of circuit boards (ADR 0108). Published as
 # github.com/pcbkit-io/verify from the PCBKit repository's apps/ci-action (scripts/publish-verify.sh).
 #
 #   - uses: actions/checkout@v4
 #   - uses: pcbkit-io/verify@v0
-#     with: { project: hardware/board, require: layout }
+#     with: { projects: "hardware/*", require: layout }
 name: PCBKit verify
-description: Check a KiCad board before you order it, with a reproducible report of each level, its coverage and its waivers
+description: Check KiCad boards before you order them, with a reproducible report of each level, its coverage and its waivers
 author: PCBKit
 branding:
   icon: check-square
   color: gray-dark
 inputs:
-  project:
-    description: The board's directory (a KiCad project, with or without a .pcbkit/ folder).
+  projects:
+    description: The boards' directories (KiCad projects, with or without a .pcbkit/ folder), or globs of them (`boards/*`, `hardware/**`), separated by spaces or lines. A glob keeps the directories that hold a board.
     default: .
   require:
-    description: The level the board must be verified to (language, wiring, ratings, intent, layout, ready).
+    description: The level each board must be verified to (language, wiring, ratings, intent, layout, ready).
     default: ready
-  strict:
-    description: Also fail on unconfirmed findings (checks still on probation) and on a required level that passes judging nothing.
+  policy:
+    description: "gate: the job fails when a board fails. report: never fails the job (a library's dashboard). strict: also fails on unconfirmed findings and on a required level that passes judging nothing."
+    default: gate
+  annotations:
+    description: Annotate findings on the files (the design's line where the check gives one); on a pull request only its new findings.
+    default: "true"
+  sarif:
+    description: Upload every finding to GitHub code scanning (needs the job's `security-events write` permission).
     default: "false"
+  comment:
+    description: On a pull request, one comment with what the change does to each board (new and fixed findings, level up or down), updated in place (needs `pull-requests write`).
+    default: "true"
+  pictures:
+    description: "Pictures of the boards in the summary, drawn by app.pcbkit.io from the commit (auto: on public repositories)."
+    default: auto
   version:
     description: The pcbkit release to install. Each version of this action is tested against the release it names here.
     default: "2026.10.31"
@@ -27,55 +39,99 @@ inputs:
     description: A pcbkit already on the runner (a self-hosted runner, a pinned build) instead of installing the release.
     default: ""
   attest:
-    description: Optional. Sign the report with a GitHub artifact attestation (needs the job's id-token and attestations write permissions; check that your plan offers attestations on private repositories).
+    description: Optional. Sign the reports with a GitHub artifact attestation (needs the job's id-token and attestations write permissions; check that your plan offers attestations on private repositories).
     default: "false"
+  token:
+    description: The token that writes the pull request's comment.
+    default: ${{ github.token }}
 outputs:
-  report:
-    description: Path of the report.
-    value: ${{ steps.gate.outputs.report }}
+  reports:
+    description: The directory of the reports (one `<board>.json` per board, summary.md, pcbkit.sarif).
+    value: pcbkit-reports
   pass:
-    description: Whether the gate passed.
+    description: Whether every board passed the gate.
     value: ${{ steps.gate.outputs.pass }}
 runs:
   using: composite
   steps:
-    - name: Install pcbkit
+    - name: Cache pcbkit
       if: inputs.binary == ''
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.tool_cache }}/pcbkit/${{ inputs.version }}
+        key: pcbkit-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+    - name: Install pcbkit
+      if: inputs.binary == '' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         PCBKIT_VERSION: ${{ inputs.version }}
+        PCBKIT_PREFIX: ${{ runner.tool_cache }}/pcbkit/${{ inputs.version }}
+      run: curl -fsSL https://pcbkit.io/install.sh | sh
+    - name: The pull request's base
+      if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+      shell: bash
+      env:
+        BASE: ${{ github.event.pull_request.base.sha }}
       run: |
-        curl -fsSL https://pcbkit.io/install.sh | sh
-        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-    - name: Check the board
+        # The base's files, to tell what the change did to each board (only changed boards are checked there).
+        dir="$RUNNER_TEMP/pcbkit-base"; rm -rf "$dir"; mkdir -p "$dir"
+        if git fetch -q --no-tags --depth=1 origin "$BASE" && git archive "$BASE" | tar -x -C "$dir"; then
+          echo "PCBKIT_BASE_DIR=$dir" >> "$GITHUB_ENV"
+        else
+          echo "::warning title=PCBKit verify::could not read the base commit $BASE: no per-board change in this run"
+        fi
+    - name: Check the boards
       id: gate
       shell: bash
       env:
-        PROJECT: ${{ inputs.project }}
+        PROJECTS: ${{ inputs.projects }}
         REQUIRE: ${{ inputs.require }}
-        STRICT: ${{ inputs.strict }}
-        BINARY: ${{ inputs.binary || 'pcbkit' }}
+        POLICY: ${{ inputs.policy }}
+        BINARY: ${{ inputs.binary || format('{0}/pcbkit/{1}/bin/pcbkit', runner.tool_cache, inputs.version) }}
+        ANNOTATIONS: ${{ inputs.annotations }}
+        SARIF: ${{ inputs.sarif }}
+        PICTURES: ${{ inputs.pictures }}
         ACTION: ${{ github.action_path }}
+        PCBKIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        PCBKIT_PUBLIC: ${{ github.event.repository.private == false && 'true' || 'false' }}
+        PCBKIT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: |
         set +e
-        strict=""; [ "$STRICT" = "true" ] && strict="--strict"
-        python3 -I "$ACTION/report.py" run --project "$PROJECT" --require "$REQUIRE" $strict --binary "$BINARY" --out pcbkit-report.json
-        code=$?
-        echo "report=pcbkit-report.json" >> "$GITHUB_OUTPUT"
-        echo "pass=$([ $code -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        args=(--require "$REQUIRE" --policy "$POLICY" --binary "$BINARY" --out pcbkit-reports)
+        [ "$ANNOTATIONS" = "true" ] && args+=(--annotations)
+        [ "$SARIF" = "true" ] && args+=(--sarif)
+        [ "$PICTURES" = "false" ] && args+=(--no-pictures)
+        [ -n "${PCBKIT_BASE_DIR:-}" ] && args+=(--base "$PCBKIT_BASE_DIR")
+        # (The patterns reach report.py unexpanded: it expands them itself.)
+        set -f; python3 -I "$ACTION/report.py" run $PROJECTS "${args[@]}"; code=$?; set +f
         echo "$code" > "$RUNNER_TEMP/pcbkit-gate-exit"
         exit 0
-    - name: Upload the report
-      if: always() && hashFiles('pcbkit-report.json') != ''
+    - name: Upload the reports
+      if: always() && hashFiles('pcbkit-reports/*.json') != ''
       uses: actions/upload-artifact@v4
       with:
-        name: pcbkit-report
-        path: pcbkit-report.json
-    - name: Sign the report
-      if: always() && inputs.attest == 'true' && hashFiles('pcbkit-report.json') != ''
+        name: pcbkit-reports
+        path: pcbkit-reports/
+    - name: Upload to code scanning
+      if: always() && inputs.sarif == 'true' && hashFiles('pcbkit-reports/pcbkit.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: pcbkit-reports/pcbkit.sarif
+        category: pcbkit
+    - name: Comment on the pull request
+      if: always() && inputs.comment == 'true' && hashFiles('pcbkit-reports/comment.md') != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PCBKIT_PR: ${{ github.event.pull_request.number }}
+        ACTION: ${{ github.action_path }}
+      run: python3 -I "$ACTION/report.py" comment pcbkit-reports/comment.md
+    - name: Sign the reports
+      if: always() && inputs.attest == 'true' && hashFiles('pcbkit-reports/*.json') != ''
       uses: actions/attest-build-provenance@v2
       with:
-        subject-path: pcbkit-report.json
+        subject-path: pcbkit-reports/*.json
     - name: Gate
       shell: bash
       run: exit "$(cat "$RUNNER_TEMP/pcbkit-gate-exit" 2>/dev/null || echo 2)"

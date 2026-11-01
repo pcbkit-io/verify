@@ -1,24 +1,26 @@
 # PCBKit verify on GitLab CI: the same report.py as the GitHub action (github.com/pcbkit-io/verify).
 #
 #   include:
-#     - remote: https://raw.githubusercontent.com/pcbkit-io/verify/v0.1.0/gitlab/pcbkit-verify.gitlab-ci.yml
-#   board:
+#     - remote: https://raw.githubusercontent.com/pcbkit-io/verify/v0.2.0/gitlab/pcbkit-verify.gitlab-ci.yml
+#   boards:
 #     extends: .pcbkit-verify
-#     variables: { PCBKIT_PROJECT: hardware/main-board, PCBKIT_REQUIRE: layout }
+#     variables: { PCBKIT_PROJECTS: "hardware/*", PCBKIT_REQUIRE: layout }
 #
-# The job fetches report.py of the same tag (PCBKIT_VERIFY_REF), installs the pcbkit release, writes
-# pcbkit-report.json (pcbkit-report@1), pcbkit-summary.md and a JUnit file whose test cases are the
-# levels, so a merge request's test widget shows which level fails and why. The job fails when the
-# gate fails. Anyone can re-check a report's digest with `report.py verify`.
+# The job fetches report.py of the same tag (PCBKIT_VERIFY_REF), installs the pcbkit release, checks
+# every board in parallel and writes pcbkit-reports/: one report per board (pcbkit-report@2), the
+# combined summary.md and a JUnit file whose suites are the boards and test cases their levels, so a
+# merge request's test widget shows which board fails at which level and why. The job fails when a
+# board fails the gate (PCBKIT_POLICY: gate), never (report) or also on unconfirmed findings
+# (strict). Anyone can re-check a report's digest with `report.py verify`.
 .pcbkit-verify:
   image: python:3.12
   variables:
-    PCBKIT_PROJECT: "."
+    PCBKIT_PROJECTS: "."           # board directories or globs (`boards/*`), separated by spaces
     PCBKIT_REQUIRE: ready
-    PCBKIT_STRICT: "false"
+    PCBKIT_POLICY: gate            # gate | report | strict
     PCBKIT_VERSION: "2026.10.31"   # the pcbkit release this version of the template is tested with
     PCBKIT_BINARY: ""              # a pcbkit already on the runner instead of installing one
-    PCBKIT_VERIFY_REF: v0.1.0      # the pcbkit-io/verify tag report.py comes from
+    PCBKIT_VERIFY_REF: v0.2.0      # the pcbkit-io/verify tag report.py comes from
     PCBKIT_VERIFY_DIR: ""          # or a copy of the action in the repository (a directory with report.py)
   script:
     - |
@@ -30,16 +32,15 @@
         curl -fsSL https://pcbkit.io/install.sh | sh
         PCBKIT_BINARY="$HOME/.local/bin/pcbkit"
       fi
-      set +e
-      strict=""; [ "$PCBKIT_STRICT" = "true" ] && strict="--strict"
-      python3 -I "$PCBKIT_VERIFY_DIR/report.py" run --project "$PCBKIT_PROJECT" --require "$PCBKIT_REQUIRE" $strict \
-        --binary "$PCBKIT_BINARY" --out pcbkit-report.json > pcbkit-summary.md
+      set +e -f
+      python3 -I "$PCBKIT_VERIFY_DIR/report.py" run $PCBKIT_PROJECTS --require "$PCBKIT_REQUIRE" --policy "$PCBKIT_POLICY" \
+        --binary "$PCBKIT_BINARY" --out pcbkit-reports
       code=$?
-      cat pcbkit-summary.md
-      [ -f pcbkit-report.json ] && python3 -I "$PCBKIT_VERIFY_DIR/report.py" junit pcbkit-report.json > pcbkit-junit.xml
+      set +f
+      ls pcbkit-reports/*.json > /dev/null 2>&1 && python3 -I "$PCBKIT_VERIFY_DIR/report.py" junit pcbkit-reports/*.json > pcbkit-junit.xml
       exit $code
   artifacts:
     when: always
-    paths: [pcbkit-report.json, pcbkit-summary.md]
+    paths: [pcbkit-reports/]
     reports:
       junit: pcbkit-junit.xml
