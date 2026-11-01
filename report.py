@@ -168,7 +168,7 @@ def coverage(verdict):
         checked, unknown, unchecked = c.get("checked", 0), c.get("unknown", 0), c.get("unchecked", 0)
         n = checked + unknown + unchecked
         out.append({"level": c["level"], "checked": checked, "unknown": unknown, "unchecked": unchecked, "cells": n,
-                    "state": states.get(c["level"]), "hollow": states.get(c["level"]) == "pass" and n > 0 and checked == 0})
+                    "state": states.get(c["level"]), "hollow": states.get(c["level"]) in ("pass", "unjudged") and n > 0 and checked == 0})
     return out
 
 

@@ -24,7 +24,7 @@ inputs:
     description: Annotate findings on the files (the design's line where the check gives one); on a pull request only its new findings.
     default: "true"
   sarif:
-    description: Upload every finding to GitHub code scanning (needs the job's `security-events write` permission).
+    description: "Opt-in: write every finding as SARIF and upload it to GitHub code scanning (needs the job's `security-events write` permission). Off by default: annotations and the summary show the findings."
     default: "false"
   comment:
     description: On a pull request, one comment with what the change does to each board (new and fixed findings, level up or down), updated in place (needs `pull-requests write`).
@@ -46,7 +46,7 @@ inputs:
     default: ${{ github.token }}
 outputs:
   reports:
-    description: The directory of the reports (one `<board>.json` per board, summary.md, pcbkit.sarif).
+    description: The directory of the reports (one `<board>.json` per board, summary.md; pcbkit.sarif with `sarif: true`).
     value: pcbkit-reports
   pass:
     description: Whether every board passed the gate.

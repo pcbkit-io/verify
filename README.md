@@ -30,7 +30,6 @@ without blocking anyone runs in report mode:
         with:
           projects: "*/*"     # every directory two levels down that holds a board
           policy: report      # the summary and the comment, never a failed job
-          sarif: true         # every finding in code scanning (permissions: security-events: write)
 ```
 
 | input | default | what |
@@ -39,7 +38,7 @@ without blocking anyone runs in report mode:
 | `require` | `ready` | the level each board must be verified to |
 | `policy` | `gate` | `gate`: the job fails when a board fails; `report`: never fails the job; `strict`: also fails on unconfirmed findings and on a required level that passes having judged nothing |
 | `annotations` | `true` | findings annotated on the files, at the design's line where the check gives one (on a pull request: only its new findings) |
-| `sarif` | `false` | every finding uploaded to GitHub code scanning (needs `security-events: write`) |
+| `sarif` | `false` | opt-in: every finding also written as `pcbkit.sarif` and uploaded to GitHub code scanning (needs `security-events: write`); a board's design findings become the repository's security alerts, so a library leaves it off |
 | `comment` | `true` | on a pull request, one comment with each changed board's new and fixed findings and level, updated in place (needs `pull-requests: write`; a fork's pull request, whose token cannot write, gets a warning) |
 | `pictures` | `auto` | pictures of the boards in the summary and the comment, drawn by app.pcbkit.io from the commit; `auto`: on public repositories |
 | `version` | the release this action version was tested with | the pcbkit release to install (cached between runs) |
@@ -47,7 +46,7 @@ without blocking anyone runs in report mode:
 | `attest` | `false` | optional: sign the reports with a GitHub artifact attestation (below) |
 
 Outputs: `pass` (`true` when every board passed the gate) and `reports` (the reports' directory,
-`pcbkit-reports`). The reports, the summary and the SARIF file are uploaded as the `pcbkit-reports`
+`pcbkit-reports`). The reports and the summary (and with `sarif: true` the SARIF file) are uploaded as the `pcbkit-reports`
 artifact. Linux and macOS runners. The boards are checked in parallel, each on a copy of its files:
 your files are never changed.
 
@@ -65,7 +64,7 @@ your files are never changed.
   base. One comment per pull request, updated on every push; none while no board changed. A push
   is compared with the commit before it the same way: unchanged boards keep the pictures already
   drawn, and annotations name only what the push brought.
-- **Annotations and code scanning**: findings at the design's line (`.pcbkit/design.pcbkit`), or on
+- **Annotations** (and code scanning with `sarif: true`): findings at the design's line (`.pcbkit/design.pcbkit`), or on
   the board file with the position in millimetres.
 
 ## The levels
